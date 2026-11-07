@@ -14,14 +14,13 @@ async function connectToMongoDB() {
   try {
     await client.connect();
     console.log("You successfully connected to MongoDB!");
+
+    const db = client.db("Frame");
+
     return client;
   } catch (err) {
     console.dir(err);
   }
-}
-// Call this only when your application terminates
-async function disconnectFromMongoDB() {
-  await client.close();
 }
 
 // Call this only when your application terminates
@@ -34,20 +33,19 @@ app.get("/", (req, res) => {
   res.send("Hello World!");
 });
 
-app.get("/api/movies/search", async (req, res) => {
+app.get("/api/media/search", async (req, res) => {
   try {
-    const query = req.query.query;
+    const { query } = req.query;
 
     if (!query) {
       return res.status(400).json({
-        error: "Movie name is required",
+        error: "Title is required",
       });
     }
 
     const response = await fetch(
-      `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(query)}`,
+      `https://api.themoviedb.org/3/search/multi?query=${encodeURIComponent(query)}`,
       {
-        method: "GET",
         headers: {
           Authorization: `Bearer ${process.env.TMDB_ACCESS_TOKEN}`,
           accept: "application/json",
@@ -63,45 +61,64 @@ app.get("/api/movies/search", async (req, res) => {
       });
     }
 
-    res.json(data);
+    const results = data.results.filter(
+      (item) => item.media_type === "movie" || item.media_type === "tv",
+    );
+
+    res.json({
+      ...data,
+      results,
+    });
   } catch (error) {
+    console.error(error);
+
     res.status(500).json({
       error: "Something went wrong",
     });
   }
 });
-app.get("/api/movies/:id", async (req, res) => {
+app.get("/api/media/:type/:id", async (req, res) => {
   try {
-    const { id } = req.params;
+    const { type, id } = req.params;
 
-    // Get movie details from TMDB
-    const response = await fetch(`https://api.themoviedb.org/3/movie/${id}`, {
-      headers: {
-        Authorization: `Bearer ${process.env.TMDB_ACCESS_TOKEN}`,
-        accept: "application/json",
+    if (!["movie", "tv"].includes(type)) {
+      return res.status(400).json({
+        message: "Invalid media type",
+      });
+    }
+
+    const response = await fetch(
+      `https://api.themoviedb.org/3/${type}/${id}?append_to_response=external_ids`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.TMDB_ACCESS_TOKEN}`,
+          accept: "application/json",
+        },
       },
-    });
+    );
 
     if (!response.ok) {
       return res.status(response.status).json({
-        message: "Failed to fetch movie details from TMDB",
+        message: "Failed to fetch details",
       });
     }
 
     const data = await response.json();
-    console.log("TMDB--->", data);
 
-    // Get IMDb rating using IMDb ID
+    const imdbId = type === "movie" ? data.imdb_id : data.external_ids?.imdb_id;
+
     let imdbRating = "";
     let language = "";
     let country = "";
-    if (data.imdb_id && process.env.OMDB_API_KEY) {
+    let seasons = "";
+
+    if (imdbId && process.env.OMDB_API_KEY) {
       const omdbResponse = await fetch(
-        `https://www.omdbapi.com/?i=${data.imdb_id}&apikey=${process.env.OMDB_API_KEY}`,
+        `https://www.omdbapi.com/?i=${imdbId}&apikey=${process.env.OMDB_API_KEY}`,
       );
 
       const omdbData = await omdbResponse.json();
-      console.log("OMDB-->", omdbData);
+      console.log(omdbData);
 
       if (omdbData.Response === "True") {
         imdbRating = omdbData.imdbRating !== "N/A" ? omdbData.imdbRating : "";
@@ -109,12 +126,20 @@ app.get("/api/movies/:id", async (req, res) => {
         language = omdbData.Language !== "N/A" ? omdbData.Language : "";
 
         country = omdbData.Country !== "N/A" ? omdbData.Country : "";
+        seasons = omdbData.totalSeasons !== "N/A" ? omdbData.totalSeasons : "";
       }
     }
 
-    // Return combined data
     res.json({
       ...data,
+      media_type: type,
+      title: data.title || data.name,
+      release_date: data.release_date || data.first_air_date,
+
+      runtime: type === "movie" ? data.runtime : "",
+
+      seasons: type === "tv" ? data.number_of_seasons : "",
+
       imdb_rating: imdbRating,
       language,
       country,
@@ -123,7 +148,7 @@ app.get("/api/movies/:id", async (req, res) => {
     console.error(error);
 
     res.status(500).json({
-      message: "Failed to fetch movie details",
+      message: "Failed to fetch media details",
     });
   }
 });
