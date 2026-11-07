@@ -10,12 +10,83 @@ dotenv.config();
 const port = process.env.PORT || 5000;
 
 const client = new MongoClient(process.env.MONGO_URI);
+let db;
+let mediaCollection;
+
 async function connectToMongoDB() {
   try {
     await client.connect();
+
+    db = client.db("Frame");
+    mediaCollection = db.collection("media");
+
     console.log("You successfully connected to MongoDB!");
 
-    const db = client.db("Frame");
+    // Insert one media
+    app.post("/api/media", async (req, res) => {
+      try {
+        const {
+          userId,
+          user,
+          title,
+          poster,
+          description,
+          releaseDate,
+          imdbRating,
+          runtime,
+          seasons,
+          language,
+          country,
+          category,
+          genres,
+          status,
+          mediaType,
+        } = req.body;
+
+        // Check required information
+        if (!userId || !title) {
+          return res.status(400).json({
+            message: "User ID and title are required",
+          });
+        }
+
+        // Prepare media data
+        const mediaData = {
+          userId,
+          user,
+          title,
+          poster,
+          description,
+          releaseDate,
+          imdbRating: imdbRating ? Number(imdbRating) : null,
+          runtime,
+          seasons: seasons ? Number(seasons) : null,
+          language,
+          country,
+          category,
+          genres,
+          status,
+          mediaType,
+
+          createdAt: new Date(),
+        };
+
+        // Insert into MongoDB
+        const result = await mediaCollection.insertOne(mediaData);
+
+        res.status(201).json({
+          message: "Media added successfully!",
+          mediaId: result.insertedId,
+          media: mediaData,
+        });
+      } catch (error) {
+        console.error("Media upload failed:", error);
+
+        res.status(500).json({
+          message: "Failed to add media",
+        });
+      }
+    });
 
     return client;
   } catch (err) {
@@ -27,7 +98,6 @@ async function connectToMongoDB() {
 //  async function disconnectFromMongoDB() {
 //   await client.close();
 // }
-connectToMongoDB();
 
 app.get("/", (req, res) => {
   res.send("Hello World!");
@@ -118,7 +188,7 @@ app.get("/api/media/:type/:id", async (req, res) => {
       );
 
       const omdbData = await omdbResponse.json();
-      console.log(omdbData);
+      // console.log(omdbData);
 
       if (omdbData.Response === "True") {
         imdbRating = omdbData.imdbRating !== "N/A" ? omdbData.imdbRating : "";
@@ -153,6 +223,14 @@ app.get("/api/media/:type/:id", async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`);
-});
+
+// start server
+async function startServer() {
+  await connectToMongoDB();
+
+  app.listen(port, () => {
+    console.log(`Example app listening on port ${port}`);
+  });
+}
+
+startServer();
