@@ -4,12 +4,16 @@ const dotenv = require("dotenv");
 const { MongoClient } = require("mongodb");
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
+
 dotenv.config();
+
 const port = process.env.PORT || 5000;
 
 const client = new MongoClient(process.env.MONGO_URI);
+
 let db;
 let mediaCollection;
 
@@ -22,7 +26,7 @@ async function connectToMongoDB() {
 
     console.log("You successfully connected to MongoDB!");
 
-    // Insert one media
+    // ADD MEDIA
     app.post("/api/media", async (req, res) => {
       try {
         const {
@@ -43,44 +47,32 @@ async function connectToMongoDB() {
           mediaType,
         } = req.body;
 
-        // Check required information
-        if (!userId || !title) {
-          return res.status(400).json({
-            message: "User ID and title are required",
-          });
-        }
-
-        // Prepare media data
-        const mediaData = {
+        const media = {
           userId,
           user,
           title,
           poster,
           description,
           releaseDate,
-          imdbRating: imdbRating ? Number(imdbRating) : null,
+          imdbRating,
           runtime,
-          seasons: seasons ? Number(seasons) : null,
+          seasons,
           language,
           country,
           category,
           genres,
           status,
           mediaType,
-
-          createdAt: new Date(),
         };
 
-        // Insert into MongoDB
-        const result = await mediaCollection.insertOne(mediaData);
+        const result = await mediaCollection.insertOne(media);
 
         res.status(201).json({
-          message: "Media added successfully!",
-          mediaId: result.insertedId,
-          media: mediaData,
+          message: "Media added successfully",
+          insertedId: result.insertedId,
         });
       } catch (error) {
-        console.error("Media upload failed:", error);
+        console.error("Error adding media:", error);
 
         res.status(500).json({
           message: "Failed to add media",
@@ -88,148 +80,174 @@ async function connectToMongoDB() {
       }
     });
 
+    // GET USER STATISTICS
+    // IMPORTANT: Keep this route ABOVE /api/media/:type/:id
+    app.get("/api/media/stats/:userId", async (req, res) => {
+      try {
+        // console.log("Statistics route reached!");
+
+        const { userId } = req.params;
+
+        // console.log("Requested User ID:", userId);
+
+        const watchlistCount = await mediaCollection.countDocuments({
+          userId: userId,
+          status: "watchlist",
+        });
+
+        const finishedCount = await mediaCollection.countDocuments({
+          userId: userId,
+          status: "finished",
+        });
+
+        res.json({
+          watchlist: watchlistCount,
+          finished: finishedCount,
+        });
+      } catch (error) {
+        console.error("Error fetching statistics:", error);
+
+        res.status(500).json({
+          message: "Failed to fetch statistics",
+        });
+      }
+    });
+
+    // SEARCH MEDIA
+    app.get("/api/media/search", async (req, res) => {
+      try {
+        const { query } = req.query;
+
+        if (!query) {
+          return res.status(400).json({
+            error: "Title is required",
+          });
+        }
+
+        const response = await fetch(
+          `https://api.themoviedb.org/3/search/multi?query=${encodeURIComponent(query)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.TMDB_ACCESS_TOKEN}`,
+              accept: "application/json",
+            },
+          },
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          return res.status(response.status).json({
+            error: data.status_message || "TMDB request failed",
+          });
+        }
+
+        // Only return movies and TV series
+        const results = data.results.filter(
+          (item) => item.media_type === "movie" || item.media_type === "tv",
+        );
+
+        res.json({
+          ...data,
+          results,
+        });
+      } catch (error) {
+        console.error("TMDB search error:", error);
+
+        res.status(500).json({
+          error: "Something went wrong",
+        });
+      }
+    });
+
+    // GET MEDIA DETAILS
+    // Keep this route BELOW the more specific routes.
+    app.get("/api/media/:type/:id", async (req, res) => {
+      try {
+        const { type, id } = req.params;
+
+        if (!["movie", "tv"].includes(type)) {
+          return res.status(400).json({
+            message: "Invalid media type",
+          });
+        }
+
+        // Fetch details from TMDB
+        const response = await fetch(
+          `https://api.themoviedb.org/3/${type}/${id}`,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.TMDB_ACCESS_TOKEN}`,
+              accept: "application/json",
+            },
+          },
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          return res.status(response.status).json({
+            message: data.status_message || "Failed to fetch TMDB details",
+          });
+        }
+
+        // Get IMDb rating from OMDb
+        let imdbRating = "";
+
+        if (data.imdb_id && process.env.OMDB_API_KEY) {
+          const omdbResponse = await fetch(
+            `https://www.omdbapi.com/?i=${data.imdb_id}&apikey=${process.env.OMDB_API_KEY}`,
+          );
+
+          const omdbData = await omdbResponse.json();
+
+          if (omdbData.Response === "True" && omdbData.imdbRating !== "N/A") {
+            imdbRating = omdbData.imdbRating;
+          }
+        }
+
+        // Prepare details for the frontend form
+        const mediaDetails = {
+          title: data.title || data.name || "",
+          poster_path: data.poster_path || "",
+          overview: data.overview || "",
+          release_date: data.release_date || data.first_air_date || "",
+          imdb_rating: imdbRating,
+          runtime: data.runtime || "",
+          seasons: data.number_of_seasons || "",
+          language:
+            data.spoken_languages
+              ?.map((language) => language.english_name)
+              .join(", ") || "",
+          country:
+            data.production_countries
+              ?.map((country) => country.name)
+              .join(", ") || "",
+          media_type: type,
+          genres: data.genres || [],
+        };
+
+        res.json(mediaDetails);
+      } catch (error) {
+        console.error("Error fetching media details:", error);
+
+        res.status(500).json({
+          message: "Failed to fetch media details",
+        });
+      }
+    });
+
     return client;
-  } catch (err) {
-    console.dir(err);
+  } catch (error) {
+    console.error("MongoDB connection error:", error);
   }
 }
 
-// Call this only when your application terminates
-//  async function disconnectFromMongoDB() {
-//   await client.close();
-// }
-
-app.get("/", (req, res) => {
-  res.send("Hello World!");
-});
-
-app.get("/api/media/search", async (req, res) => {
-  try {
-    const { query } = req.query;
-
-    if (!query) {
-      return res.status(400).json({
-        error: "Title is required",
-      });
-    }
-
-    const response = await fetch(
-      `https://api.themoviedb.org/3/search/multi?query=${encodeURIComponent(query)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.TMDB_ACCESS_TOKEN}`,
-          accept: "application/json",
-        },
-      },
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json({
-        error: data.status_message || "TMDB request failed",
-      });
-    }
-
-    const results = data.results.filter(
-      (item) => item.media_type === "movie" || item.media_type === "tv",
-    );
-
-    res.json({
-      ...data,
-      results,
-    });
-  } catch (error) {
-    console.error(error);
-
-    res.status(500).json({
-      error: "Something went wrong",
-    });
-  }
-});
-app.get("/api/media/:type/:id", async (req, res) => {
-  try {
-    const { type, id } = req.params;
-
-    if (!["movie", "tv"].includes(type)) {
-      return res.status(400).json({
-        message: "Invalid media type",
-      });
-    }
-
-    const response = await fetch(
-      `https://api.themoviedb.org/3/${type}/${id}?append_to_response=external_ids`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.TMDB_ACCESS_TOKEN}`,
-          accept: "application/json",
-        },
-      },
-    );
-
-    if (!response.ok) {
-      return res.status(response.status).json({
-        message: "Failed to fetch details",
-      });
-    }
-
-    const data = await response.json();
-
-    const imdbId = type === "movie" ? data.imdb_id : data.external_ids?.imdb_id;
-
-    let imdbRating = "";
-    let language = "";
-    let country = "";
-    let seasons = "";
-
-    if (imdbId && process.env.OMDB_API_KEY) {
-      const omdbResponse = await fetch(
-        `https://www.omdbapi.com/?i=${imdbId}&apikey=${process.env.OMDB_API_KEY}`,
-      );
-
-      const omdbData = await omdbResponse.json();
-      // console.log(omdbData);
-
-      if (omdbData.Response === "True") {
-        imdbRating = omdbData.imdbRating !== "N/A" ? omdbData.imdbRating : "";
-
-        language = omdbData.Language !== "N/A" ? omdbData.Language : "";
-
-        country = omdbData.Country !== "N/A" ? omdbData.Country : "";
-        seasons = omdbData.totalSeasons !== "N/A" ? omdbData.totalSeasons : "";
-      }
-    }
-
-    res.json({
-      ...data,
-      media_type: type,
-      title: data.title || data.name,
-      release_date: data.release_date || data.first_air_date,
-
-      runtime: type === "movie" ? data.runtime : "",
-
-      seasons: type === "tv" ? data.number_of_seasons : "",
-
-      imdb_rating: imdbRating,
-      language,
-      country,
-    });
-  } catch (error) {
-    console.error(error);
-
-    res.status(500).json({
-      message: "Failed to fetch media details",
-    });
-  }
-});
-
-
-// start server
 async function startServer() {
   await connectToMongoDB();
 
   app.listen(port, () => {
-    console.log(`Example app listening on port ${port}`);
+    console.log(`Server is running on port ${port}`);
   });
 }
 
