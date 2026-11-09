@@ -72,8 +72,6 @@ async function connectToMongoDB() {
           insertedId: result.insertedId,
         });
       } catch (error) {
-        console.error("Error adding media:", error);
-
         res.status(500).json({
           message: "Failed to add media",
         });
@@ -81,14 +79,9 @@ async function connectToMongoDB() {
     });
 
     // GET USER STATISTICS
-    // IMPORTANT: Keep this route ABOVE /api/media/:type/:id
     app.get("/api/media/stats/:userId", async (req, res) => {
       try {
-        // console.log("Statistics route reached!");
-
         const { userId } = req.params;
-
-        // console.log("Requested User ID:", userId);
 
         const watchlistCount = await mediaCollection.countDocuments({
           userId: userId,
@@ -105,24 +98,16 @@ async function connectToMongoDB() {
           finished: finishedCount,
         });
       } catch (error) {
-        console.error("Error fetching statistics:", error);
-
         res.status(500).json({
           message: "Failed to fetch statistics",
         });
       }
     });
 
-    // SEARCH MEDIA
+    // SEARCH MEDIA using TMDB
     app.get("/api/media/search", async (req, res) => {
       try {
         const { query } = req.query;
-
-        if (!query) {
-          return res.status(400).json({
-            error: "Title is required",
-          });
-        }
 
         const response = await fetch(
           `https://api.themoviedb.org/3/search/multi?query=${encodeURIComponent(query)}`,
@@ -136,12 +121,6 @@ async function connectToMongoDB() {
 
         const data = await response.json();
 
-        if (!response.ok) {
-          return res.status(response.status).json({
-            error: data.status_message || "TMDB request failed",
-          });
-        }
-
         // Only return movies and TV series
         const results = data.results.filter(
           (item) => item.media_type === "movie" || item.media_type === "tv",
@@ -152,8 +131,6 @@ async function connectToMongoDB() {
           results,
         });
       } catch (error) {
-        console.error("TMDB search error:", error);
-
         res.status(500).json({
           error: "Something went wrong",
         });
@@ -161,20 +138,13 @@ async function connectToMongoDB() {
     });
 
     // GET MEDIA DETAILS
-    // Keep this route BELOW the more specific routes.
     app.get("/api/media/:type/:id", async (req, res) => {
       try {
         const { type, id } = req.params;
-
-        if (!["movie", "tv"].includes(type)) {
-          return res.status(400).json({
-            message: "Invalid media type",
-          });
-        }
-
         // Fetch details from TMDB
+        // external_ids provides IMDb ID for TV series
         const response = await fetch(
-          `https://api.themoviedb.org/3/${type}/${id}`,
+          `https://api.themoviedb.org/3/${type}/${id}?append_to_response=external_ids`,
           {
             headers: {
               Authorization: `Bearer ${process.env.TMDB_ACCESS_TOKEN}`,
@@ -191,20 +161,34 @@ async function connectToMongoDB() {
           });
         }
 
+        // Get IMDb ID
+        const imdbId =
+          type === "tv" ? data.external_ids?.imdb_id : data.imdb_id;
+
         // Get IMDb rating from OMDb
         let imdbRating = "";
 
-        if (data.imdb_id && process.env.OMDB_API_KEY) {
-          const omdbResponse = await fetch(
-            `https://www.omdbapi.com/?i=${data.imdb_id}&apikey=${process.env.OMDB_API_KEY}`,
-          );
+        if (imdbId && process.env.OMDB_API_KEY) {
+          try {
+            const omdbResponse = await fetch(
+              `https://www.omdbapi.com/?i=${imdbId}&apikey=${process.env.OMDB_API_KEY}`,
+            );
 
-          const omdbData = await omdbResponse.json();
+            const omdbData = await omdbResponse.json();
 
-          if (omdbData.Response === "True" && omdbData.imdbRating !== "N/A") {
-            imdbRating = omdbData.imdbRating;
+            // console.log("OMDb Response:", omdbData);
+
+            if (omdbData.Response === "True" && omdbData.imdbRating !== "N/A") {
+              imdbRating = omdbData.imdbRating;
+            }
+          } catch (error) {
+            console.error("OMDb request failed:", error);
           }
+        } else {
+          console.log("IMDb ID or OMDb API key is missing.");
         }
+
+        // console.log("Final IMDb Rating:", imdbRating);
 
         // Prepare details for the frontend form
         const mediaDetails = {
@@ -234,6 +218,22 @@ async function connectToMongoDB() {
         res.status(500).json({
           message: "Failed to fetch media details",
         });
+      }
+    });
+
+    // GET MEDIAby User and Status
+    app.get("/api/media/collection/:userId/:status", async (req, res) => {
+      try {
+        const { userId, status } = req.params;
+
+        const media = await mediaCollection
+          .find({ userId, status })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.json(media);
+      } catch (error) {
+        res.status(500).json({ message: "Failed to fetch media" });
       }
     });
 
