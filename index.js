@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const { MongoClient } = require("mongodb");
+const { MongoClient, ObjectId } = require("mongodb");
 
 const app = express();
 
@@ -63,6 +63,8 @@ async function connectToMongoDB() {
           genres,
           status,
           mediaType,
+          statusChangedAt: new Date(),
+          createdAt: new Date(),
         };
 
         const result = await mediaCollection.insertOne(media);
@@ -72,6 +74,8 @@ async function connectToMongoDB() {
           insertedId: result.insertedId,
         });
       } catch (error) {
+        console.error("Error adding media:", error);
+
         res.status(500).json({
           message: "Failed to add media",
         });
@@ -98,13 +102,15 @@ async function connectToMongoDB() {
           finished: finishedCount,
         });
       } catch (error) {
+        console.error("Error fetching statistics:", error);
+
         res.status(500).json({
           message: "Failed to fetch statistics",
         });
       }
     });
 
-    // SEARCH MEDIA using TMDB
+    // SEARCH MEDIA USING TMDB
     app.get("/api/media/search", async (req, res) => {
       try {
         const { query } = req.query;
@@ -131,18 +137,20 @@ async function connectToMongoDB() {
           results,
         });
       } catch (error) {
+        console.error("TMDB search error:", error);
+
         res.status(500).json({
           error: "Something went wrong",
         });
       }
     });
 
-    // GET MEDIA DETAILS
+    // GET MEDIA DETAILS FROM TMDB
     app.get("/api/media/:type/:id", async (req, res) => {
       try {
         const { type, id } = req.params;
+
         // Fetch details from TMDB
-        // external_ids provides IMDb ID for TV series
         const response = await fetch(
           `https://api.themoviedb.org/3/${type}/${id}?append_to_response=external_ids`,
           {
@@ -176,8 +184,6 @@ async function connectToMongoDB() {
 
             const omdbData = await omdbResponse.json();
 
-            // console.log("OMDb Response:", omdbData);
-
             if (omdbData.Response === "True" && omdbData.imdbRating !== "N/A") {
               imdbRating = omdbData.imdbRating;
             }
@@ -187,8 +193,6 @@ async function connectToMongoDB() {
         } else {
           console.log("IMDb ID or OMDb API key is missing.");
         }
-
-        // console.log("Final IMDb Rating:", imdbRating);
 
         // Prepare details for the frontend form
         const mediaDetails = {
@@ -221,7 +225,7 @@ async function connectToMongoDB() {
       }
     });
 
-    // GET MEDIAby User and Status
+    // GET MEDIA BY USER AND STATUS
     app.get("/api/media/collection/:userId/:status", async (req, res) => {
       try {
         const { userId, status } = req.params;
@@ -233,11 +237,15 @@ async function connectToMongoDB() {
 
         res.json(media);
       } catch (error) {
-        res.status(500).json({ message: "Failed to fetch media" });
+        console.error("Error fetching media collection:", error);
+
+        res.status(500).json({
+          message: "Failed to fetch media",
+        });
       }
     });
 
-    // Get all media belonging to a user
+    // GET ALL MEDIA BELONGING TO A USER
     app.get("/api/allmedia/collection/:userId", async (req, res) => {
       try {
         const { userId } = req.params;
@@ -253,6 +261,140 @@ async function connectToMongoDB() {
 
         res.status(500).json({
           message: "Failed to fetch media",
+        });
+      }
+    });
+
+    // GET MEDIA FOR EDITING
+    app.get("/api/editmedia/:id/:userId", async (req, res) => {
+      try {
+        const { id, userId } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({
+            message: "Invalid media ID",
+          });
+        }
+
+        const media = await mediaCollection.findOne({
+          _id: new ObjectId(id),
+          userId,
+        });
+
+        if (!media) {
+          return res.status(404).json({
+            message: "Media not found",
+          });
+        }
+
+        res.status(200).json(media);
+      } catch (error) {
+        console.error("Error fetching media for editing:", error);
+
+        res.status(500).json({
+          message: "Failed to fetch media",
+        });
+      }
+    });
+
+    // UPDATE EXISTING MEDIA
+    app.put("/api/editmedia/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const {
+          userId,
+          title,
+          poster,
+          description,
+          releaseDate,
+          imdbRating,
+          runtime,
+          seasons,
+          language,
+          country,
+          category,
+          genres,
+          status,
+          mediaType,
+        } = req.body;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({
+            message: "Invalid media ID",
+          });
+        }
+
+        if (!userId) {
+          return res.status(400).json({
+            message: "User ID is required",
+          });
+        }
+
+        if (!["watchlist", "finished"].includes(status)) {
+          return res.status(400).json({
+            message: "Invalid media status",
+          });
+        }
+
+        // Find the existing media
+        const existingMedia = await mediaCollection.findOne({
+          _id: new ObjectId(id),
+          userId,
+        });
+
+        if (!existingMedia) {
+          return res.status(404).json({
+            message: "Media not found",
+          });
+        }
+
+        // Prepare updated media
+        const updatedMedia = {
+          title,
+          poster,
+          description,
+          releaseDate,
+          imdbRating,
+          runtime,
+          seasons,
+          language,
+          country,
+          category,
+          genres,
+          status,
+          mediaType,
+        };
+
+        // Update timestamp only when status changes
+        if (existingMedia.status !== status) {
+          updatedMedia.statusChangedAt = new Date();
+        }
+
+        const result = await mediaCollection.updateOne(
+          {
+            _id: new ObjectId(id),
+            userId,
+          },
+          {
+            $set: updatedMedia,
+          },
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({
+            message: "Media not found",
+          });
+        }
+
+        res.status(200).json({
+          message: "Media updated successfully",
+        });
+      } catch (error) {
+        console.error("Error updating media:", error);
+
+        res.status(500).json({
+          message: "Failed to update media",
         });
       }
     });
