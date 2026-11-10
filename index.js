@@ -237,6 +237,26 @@ async function connectToMongoDB() {
       }
     });
 
+    // Get all media belonging to a user
+    app.get("/api/allmedia/collection/:userId", async (req, res) => {
+      try {
+        const { userId } = req.params;
+
+        const media = await mediaCollection
+          .find({ userId })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.status(200).json(media);
+      } catch (error) {
+        console.error("Error fetching collection:", error);
+
+        res.status(500).json({
+          message: "Failed to fetch media",
+        });
+      }
+    });
+
     return client;
   } catch (error) {
     console.error("MongoDB connection error:", error);
