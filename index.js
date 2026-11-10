@@ -10,7 +10,7 @@ app.use(express.json());
 
 dotenv.config();
 
-const port = process.env.PORT || 5000;
+const port = process.env.PORT;
 
 const client = new MongoClient(process.env.MONGO_URI);
 
