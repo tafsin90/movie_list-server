@@ -19,7 +19,7 @@ let mediaCollection;
 
 async function connectToMongoDB() {
   try {
-    await client.connect();
+    // await client.connect();
 
     db = client.db("Frame");
     mediaCollection = db.collection("media");
