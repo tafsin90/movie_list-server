@@ -399,6 +399,44 @@ async function connectToMongoDB() {
       }
     });
 
+    // DELETE MEDIA
+    app.delete("/api/media/delete/:id/:userId", async (req, res) => {
+      try {
+        const { id, userId } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({
+            message: "Invalid media ID",
+          });
+        }
+
+        if (!userId) {
+          return res.status(400).json({
+            message: "User ID is required",
+          });
+        }
+
+        const result = await mediaCollection.deleteOne({
+          _id: new ObjectId(id),
+          userId,
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({
+            message: "Media not found",
+          });
+        }
+
+        res.status(200).json({
+          message: "Media deleted successfully",
+        });
+      } catch (error) {
+        res.status(500).json({
+          message: "Failed to delete media",
+        });
+      }
+    });
+
     return client;
   } catch (error) {
     console.error("MongoDB connection error:", error);
