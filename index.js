@@ -436,7 +436,10 @@ async function connectToMongoDB() {
         });
       }
     });
-
+    // HOME
+    app.get("/", (req, res) => {
+      res.send("FRAME API Server is running!");
+    });
     return client;
   } catch (error) {
     console.error("MongoDB connection error:", error);
