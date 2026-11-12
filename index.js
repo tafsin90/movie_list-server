@@ -10,7 +10,7 @@ app.use(express.json());
 
 dotenv.config();
 
-const port = process.env.PORT;
+const port = process.env.PORT || 5000;
 
 const client = new MongoClient(process.env.MONGO_URI);
 
@@ -19,10 +19,38 @@ let mediaCollection;
 
 async function connectToMongoDB() {
   try {
-    // await client.connect();
+    await client.connect();
 
     db = client.db("Frame");
     mediaCollection = db.collection("media");
+
+    // Collection queries
+    await mediaCollection.createIndex({
+      userId: 1,
+      status: 1,
+      statusChangedAt: -1,
+    });
+
+    // All media queries
+    await mediaCollection.createIndex({
+      userId: 1,
+      createdAt: -1,
+    });
+
+    // no duplicate
+    await mediaCollection.createIndex(
+      {
+        userId: 1,
+        mediaType: 1,
+        tmdbId: 1,
+      },
+      {
+        unique: true,
+        partialFilterExpression: {
+          tmdbId: { $type: "string" },
+        },
+      },
+    );
 
     console.log("You successfully connected to MongoDB!");
 
@@ -87,20 +115,23 @@ async function connectToMongoDB() {
       try {
         const { userId } = req.params;
 
-        const watchlistCount = await mediaCollection.countDocuments({
-          userId: userId,
-          status: "watchlist",
-        });
+        const [watchlistCount, finishedCount] = await Promise.all([
+          mediaCollection.countDocuments({
+            userId,
+            status: "watchlist",
+          }),
 
-        const finishedCount = await mediaCollection.countDocuments({
-          userId: userId,
-          status: "finished",
-        });
+          mediaCollection.countDocuments({
+            userId,
+            status: "finished",
+          }),
+        ]);
 
         res.json({
           watchlist: watchlistCount,
           finished: finishedCount,
         });
+
       } catch (error) {
         console.error("Error fetching statistics:", error);
 
@@ -141,6 +172,41 @@ async function connectToMongoDB() {
 
         res.status(500).json({
           error: "Something went wrong",
+        });
+      }
+    });
+
+    // nav search
+    app.get("/api/media/search-collection", async (req, res) => {
+      try {
+        const { userId, search } = req.query;
+
+        if (!search?.trim()) {
+          return res.json([]);
+        }
+
+        const results = await mediaCollection
+          .find({
+            userId,
+            title: {
+              $regex: search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+              $options: "i",
+            },
+          })
+          .project({
+            title: 1,
+            poster: 1,
+            category: 1,
+            status: 1,
+          })
+          .limit(8)
+          .toArray();
+
+        res.json(results);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({
+          message: "Search failed",
         });
       }
     });
@@ -225,19 +291,66 @@ async function connectToMongoDB() {
       }
     });
 
-    // GET MEDIA BY USER AND STATUS
+    // GET USER MEDIA WITH PAGINATION
     app.get("/api/media/collection/:userId/:status", async (req, res) => {
       try {
         const { userId, status } = req.params;
 
-        const media = await mediaCollection
-          .find({ userId, status })
-          .sort({ createdAt: -1 })
+        // Pagination
+        const page = Math.max(1, Number(req.query.page) || 1);
+        const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
+
+        const skip = (page - 1) * limit;
+
+        // Sorting
+        const sortOptions = {
+          recent: { statusChangedAt: -1, _id: -1 },
+          title: { title: 1, _id: 1 },
+          rating: { imdbRating: -1, _id: -1 },
+          newest: { releaseDate: -1, _id: -1 },
+        };
+
+        const sort = sortOptions[req.query.sort] || sortOptions.recent;
+
+        // Filtering
+        const filter = { userId, status };
+
+        if (req.query.category && req.query.category !== "All") {
+          filter.category = req.query.category;
+        }
+
+        // Search
+        if (req.query.search?.trim()) {
+          filter.title = {
+            $regex: req.query.search
+              .trim()
+              .replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+            $options: "i",
+          };
+        }
+
+        // Get total matching documents
+        const totalItems = await mediaCollection.countDocuments(filter);
+
+        // Get only requested documents
+        const items = await mediaCollection
+          .find(filter)
+          .sort(sort)
+          .skip(skip)
+          .limit(limit)
           .toArray();
 
-        res.json(media);
+        res.json({
+          items,
+          pagination: {
+            currentPage: page,
+            totalPages: Math.ceil(totalItems / limit),
+            totalItems,
+            limit,
+          },
+        });
       } catch (error) {
-        console.error("Error fetching media collection:", error);
+        console.error("Error fetching collection:", error);
 
         res.status(500).json({
           message: "Failed to fetch media",
