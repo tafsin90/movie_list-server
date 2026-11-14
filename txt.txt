@@ -1,0 +1,16 @@
+watchlist/ finished pagination
+===============================
+MediaCollection.jsx --> 
+------------------------
+const params = new URLSearchParams({
+  page: page.toString(),
+  limit: "50",
+  search,
+  category,
+  sort,
+});
+
+
+index.js --> 
+------------
+const limit = Math.min(50, parseInt(req.query.limit) || 20);
