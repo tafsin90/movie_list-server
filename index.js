@@ -585,7 +585,8 @@ async function connectToMongoDB() {
   });
 
   // REMOVE MEDIA FROM FRANCHISE
-  app.delete("/api/franchise-folders/:franchiseId/items/:mediaId",
+  app.delete(
+    "/api/franchise-folders/:franchiseId/items/:mediaId",
     async (req, res) => {
       try {
         const { franchiseId, mediaId } = req.params;
@@ -712,7 +713,6 @@ async function connectToMongoDB() {
     }
   });
 
-
   // ==========================================
   // MEDIA APIs
   // ==========================================
@@ -786,21 +786,295 @@ async function connectToMongoDB() {
     try {
       const { userId } = req.params;
 
-      const [watchlistCount, finishedCount] = await Promise.all([
-        mediaCollection.countDocuments({
-          userId,
-          status: "watchlist",
-        }),
+      if (!userId) {
+        return res.status(400).json({
+          message: "User ID is required",
+        });
+      }
 
-        mediaCollection.countDocuments({
-          userId,
-          status: "finished",
-        }),
-      ]);
+      const statistics = await mediaCollection
+        .aggregate([
+          {
+            $match: {
+              userId,
+              status: {
+                $in: ["watchlist", "finished"],
+              },
+            },
+          },
+          {
+            $facet: {
+              overview: [
+                {
+                  $group: {
+                    _id: null,
+
+                    total: {
+                      $sum: 1,
+                    },
+
+                    completed: {
+                      $sum: {
+                        $cond: [{ $eq: ["$status", "finished"] }, 1, 0],
+                      },
+                    },
+
+                    watchlist: {
+                      $sum: {
+                        $cond: [{ $eq: ["$status", "watchlist"] }, 1, 0],
+                      },
+                    },
+
+                    averageRating: {
+                      $avg: {
+                        $convert: {
+                          input: "$imdbRating",
+                          to: "double",
+                          onError: null,
+                          onNull: null,
+                        },
+                      },
+                    },
+
+                    ratedCount: {
+                      $sum: {
+                        $cond: [
+                          {
+                            $ne: [
+                              {
+                                $convert: {
+                                  input: "$imdbRating",
+                                  to: "double",
+                                  onError: null,
+                                  onNull: null,
+                                },
+                              },
+                              null,
+                            ],
+                          },
+                          1,
+                          0,
+                        ],
+                      },
+                    },
+                  },
+                },
+              ],
+
+              overallCategories: [
+                {
+                  $group: {
+                    _id: {
+                      $ifNull: ["$category", "Uncategorized"],
+                    },
+                    count: {
+                      $sum: 1,
+                    },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    name: "$_id",
+                    value: "$count",
+                  },
+                },
+                {
+                  $sort: {
+                    value: -1,
+                  },
+                },
+              ],
+
+              watchlistCategories: [
+                {
+                  $match: {
+                    status: "watchlist",
+                  },
+                },
+                {
+                  $group: {
+                    _id: {
+                      $ifNull: ["$category", "Uncategorized"],
+                    },
+                    count: {
+                      $sum: 1,
+                    },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    name: "$_id",
+                    value: "$count",
+                  },
+                },
+                {
+                  $sort: {
+                    value: -1,
+                  },
+                },
+              ],
+
+              finishedCategories: [
+                {
+                  $match: {
+                    status: "finished",
+                  },
+                },
+                {
+                  $group: {
+                    _id: {
+                      $ifNull: ["$category", "Uncategorized"],
+                    },
+                    count: {
+                      $sum: 1,
+                    },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    name: "$_id",
+                    value: "$count",
+                  },
+                },
+                {
+                  $sort: {
+                    value: -1,
+                  },
+                },
+              ],
+
+              watchlistGenres: [
+                {
+                  $match: {
+                    status: "watchlist",
+                  },
+                },
+                {
+                  $unwind: "$genres",
+                },
+                {
+                  $group: {
+                    _id: {
+                      $cond: [
+                        { $eq: [{ $type: "$genres" }, "object"] },
+                        "$genres.name",
+                        "$genres",
+                      ],
+                    },
+                    count: {
+                      $sum: 1,
+                    },
+                  },
+                },
+                {
+                  $match: {
+                    _id: {
+                      $nin: [null, ""],
+                    },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    name: "$_id",
+                    value: "$count",
+                  },
+                },
+                {
+                  $sort: {
+                    value: -1,
+                  },
+                },
+                {
+                  $limit: 15,
+                },
+              ],
+
+              finishedGenres: [
+                {
+                  $match: {
+                    status: "finished",
+                  },
+                },
+                {
+                  $unwind: "$genres",
+                },
+                {
+                  $group: {
+                    _id: {
+                      $cond: [
+                        { $eq: [{ $type: "$genres" }, "object"] },
+                        "$genres.name",
+                        "$genres",
+                      ],
+                    },
+                    count: {
+                      $sum: 1,
+                    },
+                  },
+                },
+                {
+                  $match: {
+                    _id: {
+                      $nin: [null, ""],
+                    },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    name: "$_id",
+                    value: "$count",
+                  },
+                },
+                {
+                  $sort: {
+                    value: -1,
+                  },
+                },
+                {
+                  $limit: 15,
+                },
+              ],
+            },
+          },
+        ])
+        .toArray();
+
+      const result = statistics[0];
+
+      const overviewData = result?.overview?.[0] || {};
 
       res.json({
-        watchlist: watchlistCount,
-        finished: finishedCount,
+        // Keep these two numeric values for your existing component.
+        watchlist: overviewData.watchlist || 0,
+        finished: overviewData.completed || 0,
+
+        // New overview information.
+        overview: {
+          total: overviewData.total || 0,
+          completed: overviewData.completed || 0,
+          watchlist: overviewData.watchlist || 0,
+          averageRating: overviewData.averageRating
+            ? Number(overviewData.averageRating.toFixed(1))
+            : 0,
+          ratedCount: overviewData.ratedCount || 0,
+          categories: result?.overallCategories || [],
+        },
+
+        // New chart information.
+        categories: {
+          watchlist: result?.watchlistCategories || [],
+          finished: result?.finishedCategories || [],
+        },
+
+        genres: {
+          watchlist: result?.watchlistGenres || [],
+          finished: result?.finishedGenres || [],
+        },
       });
     } catch (error) {
       console.error("Error fetching statistics:", error);

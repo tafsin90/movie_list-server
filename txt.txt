@@ -1,4 +1,4 @@
-watchlist/ finished pagination
+1. watchlist/ finished pagination
 ===============================
 MediaCollection.jsx --> 
 ------------------------
@@ -14,3 +14,13 @@ const params = new URLSearchParams({
 index.js --> 
 ------------
 const limit = Math.min(50, parseInt(req.query.limit) || 20);
+
+
+
+2. show how many genre to show in BarChart
+========================================
+index.js --> 
+--------------
+app.get("/api/media/stats/:userId"
+in watchlistGenres pipeline: { $limit: 100, },
+in finishedGenres pipeline: { $limit: 100, },
