@@ -585,8 +585,7 @@ async function connectToMongoDB() {
   });
 
   // REMOVE MEDIA FROM FRANCHISE
-  app.delete(
-    "/api/franchise-folders/:franchiseId/items/:mediaId",
+  app.delete("/api/franchise-folders/:franchiseId/items/:mediaId",
     async (req, res) => {
       try {
         const { franchiseId, mediaId } = req.params;
