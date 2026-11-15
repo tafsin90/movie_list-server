@@ -34,28 +34,31 @@ HOW IT WORKS
 5. TMDB and OMDb credentials are used by the server only and must not be
    placed in client-side environment variables.
 
-API OVERVIEW
-------------
-Media:
-- POST /api/media                         Add a media record
-- GET  /api/media/collection/:userId/:status
-                                            List a user's watchlist or
-                                            finished collection; supports
-                                            paging, search, filters, sorting
-- GET  /api/media/search?query=...         Search TMDB
-- GET  /api/media/:type/:id                Get TMDB details and ratings
-- GET  /api/media/stats/:userId            Get collection statistics
-- GET  /api/allmedia/collection/:userId    Get the user's full archive
-- GET  /api/media/search-collection        Search the user's own collection
-- PUT  /api/editmedia/:id                  Update a media record
-- DELETE /api/media/delete/:id/:userId     Delete a media record
+## API Overview
 
-Franchises:
-- /api/franchise-folders                   Create and manage folders
-- /api/franchise-folders/user/:userId      List a user's folders
-- /api/franchise-folders/:id               Read, update, or delete a folder
-- /api/franchise-folders/:id/items         Add or remove associated media
-- /api/franchise-folders/:id/order         Save a custom media order
+### Media APIs
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/media` | Add a new media record |
+| `GET` | `/api/media/collection/:userId/:status` | Retrieve a user's watchlist or finished collection with pagination, search, filters, and sorting |
+| `GET` | `/api/media/search?query=...` | Search for media titles using TMDB |
+| `GET` | `/api/media/:type/:id` | Retrieve TMDB media details and ratings |
+| `GET` | `/api/media/stats/:userId` | Retrieve collection statistics |
+| `GET` | `/api/allmedia/collection/:userId` | Retrieve the user's complete media archive |
+| `GET` | `/api/media/search-collection` | Search within the user's own collection |
+| `PUT` | `/api/editmedia/:id` | Update an existing media record |
+| `DELETE` | `/api/media/delete/:id/:userId` | Delete a media record |
+
+### Franchise APIs
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/franchise-folders` | Create and manage franchise folders |
+| `GET` | `/api/franchise-folders/user/:userId` | Retrieve all folders belonging to a user |
+| `GET / PUT / DELETE` | `/api/franchise-folders/:id` | Read, update, or delete a franchise folder |
+| `POST / DELETE` | `/api/franchise-folders/:id/items` | Add or remove associated media from a folder |
+| `PUT` | `/api/franchise-folders/:id/order` | Save a custom media order within a folder |
 
 LOCAL SETUP
 -----------
