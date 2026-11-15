@@ -13,7 +13,9 @@ const params = new URLSearchParams({
 
 index.js --> 
 ------------
+- in -- app.get("/api/media/collection/:userId/:status",
 const limit = Math.min(50, parseInt(req.query.limit) || 20);
+  change 50 to any number
 
 
 
@@ -21,6 +23,16 @@ const limit = Math.min(50, parseInt(req.query.limit) || 20);
 ========================================
 index.js --> 
 --------------
-app.get("/api/media/stats/:userId"
+- in -- app.get("/api/media/stats/:userId"
 in watchlistGenres pipeline: { $limit: 100, },
 in finishedGenres pipeline: { $limit: 100, },
+
+
+
+2. to change genre filter logic AND to OR or vice versa
+========================================
+index.js --> 
+--------------
+- in -- app.get("/api/media/collection/:userId/:status", async (req, res)
+  filter.$or = selectedGenres.map((genre) => {
+    here change $or to $and

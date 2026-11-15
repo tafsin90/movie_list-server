@@ -1249,7 +1249,7 @@ async function connectToMongoDB() {
     }
   });
 
-  // GET USER MEDIA WITH PAGINATION
+  // GET USER MEDIA WITH PAGINATION AND GENRE FILTERING
   app.get("/api/media/collection/:userId/:status", async (req, res) => {
     try {
       const { userId, status } = req.params;
@@ -1269,10 +1269,12 @@ async function connectToMongoDB() {
 
       const filter = { userId, status };
 
+      // CATEGORY FILTER
       if (req.query.category && req.query.category !== "All") {
         filter.category = req.query.category;
       }
 
+      // SEARCH FILTER
       if (req.query.search?.trim()) {
         filter.title = {
           $regex: req.query.search
@@ -1282,8 +1284,46 @@ async function connectToMongoDB() {
         };
       }
 
+      // GENRE FILTER (AND LOGIC)
+      const selectedGenres = req.query.genres
+        ? req.query.genres
+            .split(",")
+            .map((genre) => genre.trim())
+            .filter(Boolean)
+        : [];
+
+      if (selectedGenres.length > 0) {
+        filter.$and = selectedGenres.map((genre) => {
+          const escapedGenre = genre.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+          const genreRegex = new RegExp(`^${escapedGenre}$`, "i");
+
+          return {
+            $or: [
+              // Match genres stored as strings
+              {
+                genres: {
+                  $in: [genreRegex],
+                },
+              },
+
+              // Match TMDB genre objects
+              {
+                genres: {
+                  $elemMatch: {
+                    name: genreRegex,
+                  },
+                },
+              },
+            ],
+          };
+        });
+      }
+
+      // TOTAL MATCHING ITEMS
       const totalItems = await mediaCollection.countDocuments(filter);
 
+      // FETCH MEDIA
       const items = await mediaCollection
         .find(filter)
         .sort(sort)
