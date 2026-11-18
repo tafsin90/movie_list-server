@@ -19,6 +19,147 @@ let mediaCollection;
 let franchisesCollection;
 let franchiseItemsCollection;
 
+// ADD FRANCHISE INFORMATION TO MEDIA
+async function attachFranchisesToMedia(userId, mediaItems) {
+  if (!mediaItems.length) {
+    return [];
+  }
+
+  const mediaIds = mediaItems.map((item) => item._id);
+
+  const relationships = await franchiseItemsCollection
+    .find({
+      userId,
+      mediaId: { $in: mediaIds },
+    })
+    .toArray();
+
+  const franchiseIds = [
+    ...new Map(
+      relationships.map((item) => [
+        item.franchiseId.toString(),
+        item.franchiseId,
+      ]),
+    ).values(),
+  ];
+
+  // Get directly assigned franchises
+  const directFranchises = franchiseIds.length
+    ? await franchisesCollection
+        .find({
+          userId,
+          _id: { $in: franchiseIds },
+        })
+        .project({
+          name: 1,
+          parentId: 1,
+          level: 1,
+        })
+        .toArray()
+    : [];
+
+  const franchiseMap = new Map(
+    directFranchises.map((franchise) => [
+      franchise._id.toString(),
+      franchise,
+    ]),
+  );
+
+  // Find all parent franchises recursively
+  let parentIds = directFranchises
+    .map((franchise) => franchise.parentId)
+    .filter(Boolean);
+
+  while (parentIds.length > 0) {
+    const uniqueParentIds = [
+      ...new Map(
+        parentIds.map((id) => [id.toString(), id]),
+      ).values(),
+    ].filter((id) => !franchiseMap.has(id.toString()));
+
+    if (uniqueParentIds.length === 0) {
+      break;
+    }
+
+    const parents = await franchisesCollection
+      .find({
+        userId,
+        _id: { $in: uniqueParentIds },
+      })
+      .project({
+        name: 1,
+        parentId: 1,
+        level: 1,
+      })
+      .toArray();
+
+    parents.forEach((parent) => {
+      franchiseMap.set(parent._id.toString(), parent);
+    });
+
+    parentIds = parents
+      .map((parent) => parent.parentId)
+      .filter(Boolean);
+  }
+
+  // Attach direct franchises and their ancestors to each media item
+  const mediaFranchiseMap = new Map();
+
+  for (const relationship of relationships) {
+    const mediaId = relationship.mediaId.toString();
+    const directFranchise = franchiseMap.get(
+      relationship.franchiseId.toString(),
+    );
+
+    if (!directFranchise) continue;
+
+    const chain = [];
+    const visited = new Set();
+
+    let current = directFranchise;
+
+    while (current) {
+      const currentId = current._id.toString();
+
+      if (visited.has(currentId)) break;
+
+      visited.add(currentId);
+      chain.push(current);
+
+      current = current.parentId
+        ? franchiseMap.get(current.parentId.toString())
+        : null;
+    }
+
+    // Parent first, child last
+    chain.reverse();
+
+    if (!mediaFranchiseMap.has(mediaId)) {
+      mediaFranchiseMap.set(mediaId, []);
+    }
+
+    const existingFranchises = mediaFranchiseMap.get(mediaId);
+    const existingIds = new Set(
+      existingFranchises.map((franchise) =>
+        franchise._id.toString(),
+      ),
+    );
+
+    chain.forEach((franchise) => {
+      if (!existingIds.has(franchise._id.toString())) {
+        existingFranchises.push(franchise);
+        existingIds.add(franchise._id.toString());
+      }
+    });
+  }
+
+  return mediaItems.map((item) => ({
+    ...item,
+    franchises:
+      mediaFranchiseMap.get(item._id.toString()) || [],
+  }));
+}
+
 // ==========================================
 // MONGODB CONNECTION
 // ==========================================
@@ -27,11 +168,10 @@ async function connectToMongoDB() {
   await client.connect();
 
   db = client.db("Frame");
-
+  // INITIALIZE COLLECTIONS
   mediaCollection = db.collection("media");
   franchisesCollection = db.collection("franchises");
   franchiseItemsCollection = db.collection("franchiseItems");
-
   // ==========================================
   // MEDIA INDEXES
   // ==========================================
@@ -1324,12 +1464,15 @@ async function connectToMongoDB() {
       const totalItems = await mediaCollection.countDocuments(filter);
 
       // FETCH MEDIA
-      const items = await mediaCollection
+      const mediaItems = await mediaCollection
         .find(filter)
         .sort(sort)
         .skip(skip)
         .limit(limit)
         .toArray();
+
+      // ATTACH FRANCHISE INFORMATION
+      const items = await attachFranchisesToMedia(userId, mediaItems);
 
       res.json({
         items,
@@ -1370,37 +1513,42 @@ async function connectToMongoDB() {
   });
 
   // GET MEDIA FOR EDITING
-  app.get("/api/editmedia/:id/:userId", async (req, res) => {
-    try {
-      const { id, userId } = req.params;
+app.get("/api/editmedia/:id/:userId", async (req, res) => {
+  try {
+    const { id, userId } = req.params;
 
-      if (!ObjectId.isValid(id)) {
-        return res.status(400).json({
-          message: "Invalid media ID",
-        });
-      }
-
-      const media = await mediaCollection.findOne({
-        _id: new ObjectId(id),
-        userId,
-      });
-
-      if (!media) {
-        return res.status(404).json({
-          message: "Media not found",
-        });
-      }
-
-      res.status(200).json(media);
-    } catch (error) {
-      console.error("Error fetching media for editing:", error);
-
-      res.status(500).json({
-        message: "Failed to fetch media",
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        message: "Invalid media ID",
       });
     }
-  });
 
+    const media = await mediaCollection.findOne({
+      _id: new ObjectId(id),
+      userId,
+    });
+
+    if (!media) {
+      return res.status(404).json({
+        message: "Media not found",
+      });
+    }
+
+    // ATTACH FRANCHISE INFORMATION
+    const [mediaWithFranchises] = await attachFranchisesToMedia(
+      userId,
+      [media],
+    );
+
+    res.status(200).json(mediaWithFranchises);
+  } catch (error) {
+    console.error("Error fetching media for editing:", error);
+
+    res.status(500).json({
+      message: "Failed to fetch media",
+    });
+  }
+});
   // UPDATE EXISTING MEDIA
   app.put("/api/editmedia/:id", async (req, res) => {
     try {
