@@ -248,6 +248,73 @@ async function connectToMongoDB() {
   // ==========================================
 
   // CREATE FRANCHISE OR SUBCOLLECTION
+  app.post("/api/franchise-folders", async (req, res) => {
+    try {
+      const { userId, name, poster, description, parentId } = req.body || {};
+
+      if (!userId || typeof name !== "string" || !name.trim()) {
+        return res.status(400).json({
+          message: "User ID and franchise name are required",
+        });
+      }
+
+      let parentObjectId = null;
+
+      if (parentId) {
+        if (!ObjectId.isValid(parentId)) {
+          return res.status(400).json({
+            message: "Invalid parent franchise ID",
+          });
+        }
+
+        parentObjectId = new ObjectId(parentId);
+        const parent = await franchisesCollection.findOne({
+          _id: parentObjectId,
+          userId,
+          parentId: null,
+        });
+
+        if (!parent) {
+          return res.status(404).json({
+            message: "Parent franchise not found",
+          });
+        }
+      }
+
+      const now = new Date();
+      const franchise = {
+        userId,
+        name: name.trim(),
+        poster: typeof poster === "string" ? poster.trim() : "",
+        description:
+          typeof description === "string" ? description.trim() : "",
+        parentId: parentObjectId,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const result = await franchisesCollection.insertOne(franchise);
+
+      res.status(201).json({
+        message: "Franchise created successfully",
+        franchiseId: result.insertedId,
+      });
+    } catch (error) {
+      console.error("Create franchise error:", error);
+
+      if (error.code === 11000) {
+        return res.status(409).json({
+          message: "A franchise with this name already exists",
+        });
+      }
+
+      res.status(500).json({
+        message: "Failed to create franchise",
+      });
+    }
+  });
+
+  // UPDATE FRANCHISE WATCH ORDER
   app.put(
     "/api/franchise-folders/:franchiseId/watch-order",
     async (req, res) => {
