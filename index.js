@@ -59,10 +59,7 @@ async function attachFranchisesToMedia(userId, mediaItems) {
     : [];
 
   const franchiseMap = new Map(
-    directFranchises.map((franchise) => [
-      franchise._id.toString(),
-      franchise,
-    ]),
+    directFranchises.map((franchise) => [franchise._id.toString(), franchise]),
   );
 
   // Find all parent franchises recursively
@@ -72,9 +69,7 @@ async function attachFranchisesToMedia(userId, mediaItems) {
 
   while (parentIds.length > 0) {
     const uniqueParentIds = [
-      ...new Map(
-        parentIds.map((id) => [id.toString(), id]),
-      ).values(),
+      ...new Map(parentIds.map((id) => [id.toString(), id])).values(),
     ].filter((id) => !franchiseMap.has(id.toString()));
 
     if (uniqueParentIds.length === 0) {
@@ -97,9 +92,7 @@ async function attachFranchisesToMedia(userId, mediaItems) {
       franchiseMap.set(parent._id.toString(), parent);
     });
 
-    parentIds = parents
-      .map((parent) => parent.parentId)
-      .filter(Boolean);
+    parentIds = parents.map((parent) => parent.parentId).filter(Boolean);
   }
 
   // Attach direct franchises and their ancestors to each media item
@@ -140,9 +133,7 @@ async function attachFranchisesToMedia(userId, mediaItems) {
 
     const existingFranchises = mediaFranchiseMap.get(mediaId);
     const existingIds = new Set(
-      existingFranchises.map((franchise) =>
-        franchise._id.toString(),
-      ),
+      existingFranchises.map((franchise) => franchise._id.toString()),
     );
 
     chain.forEach((franchise) => {
@@ -155,8 +146,7 @@ async function attachFranchisesToMedia(userId, mediaItems) {
 
   return mediaItems.map((item) => ({
     ...item,
-    franchises:
-      mediaFranchiseMap.get(item._id.toString()) || [],
+    franchises: mediaFranchiseMap.get(item._id.toString()) || [],
   }));
 }
 
@@ -258,78 +248,62 @@ async function connectToMongoDB() {
   // ==========================================
 
   // CREATE FRANCHISE OR SUBCOLLECTION
-  app.post("/api/franchise-folders", async (req, res) => {
-    try {
-      const { userId, name, poster, description, parentId } = req.body;
+  app.put(
+    "/api/franchise-folders/:franchiseId/watch-order",
+    async (req, res) => {
+      try {
+        const { franchiseId } = req.params;
+        const { userId, watchOrder } = req.body;
 
-      if (!userId || !name?.trim()) {
-        return res.status(400).json({
-          message: "User ID and franchise name are required",
-        });
-      }
-
-      let parentObjectId = null;
-      let level = 0;
-
-      // CREATE SUBCOLLECTION IF parentId IS PROVIDED
-      if (parentId) {
-        if (!ObjectId.isValid(parentId)) {
+        if (!ObjectId.isValid(franchiseId)) {
           return res.status(400).json({
-            message: "Invalid parent franchise ID",
+            message: "Invalid franchise ID",
           });
         }
 
-        parentObjectId = new ObjectId(parentId);
+        if (!userId) {
+          return res.status(401).json({
+            message: "User ID is required",
+          });
+        }
 
-        const parent = await franchisesCollection.findOne({
-          _id: parentObjectId,
-          userId,
-          parentId: null,
-        });
+        if (typeof watchOrder !== "string") {
+          return res.status(400).json({
+            message: "Watch order must be a string",
+          });
+        }
 
-        if (!parent) {
+        const result = await franchisesCollection.updateOne(
+          {
+            _id: new ObjectId(franchiseId),
+          },
+          {
+            $set: {
+              watchOrder,
+              updatedAt: new Date(),
+            },
+          },
+        );
+
+        if (result.matchedCount === 0) {
           return res.status(404).json({
-            message: "Parent franchise not found",
+            message: "Franchise not found",
           });
         }
 
-        level = 1;
-      }
+        res.status(200).json({
+          message: "Watch order saved successfully",
+          watchOrder,
+        });
+      } catch (error) {
+        console.error("Watch order update error:", error);
 
-      const franchise = {
-        userId,
-        name: name.trim(),
-        poster: poster?.trim() || "",
-        description: description?.trim() || "",
-        parentId: parentObjectId,
-        level,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      const result = await franchisesCollection.insertOne(franchise);
-
-      res.status(201).json({
-        message:
-          level === 0
-            ? "Franchise created successfully"
-            : "Subcollection created successfully",
-        franchiseId: result.insertedId,
-      });
-    } catch (error) {
-      console.error("Create franchise error:", error);
-
-      if (error.code === 11000) {
-        return res.status(409).json({
-          message: "A franchise with this name already exists",
+        res.status(500).json({
+          message: "Failed to update watch order",
         });
       }
-
-      res.status(500).json({
-        message: "Failed to create franchise",
-      });
-    }
-  });
+    },
+  );
 
   // GET ALL USER PARENT FRANCHISES
   app.get("/api/franchise-folders/user/:userId", async (req, res) => {
@@ -548,6 +522,58 @@ async function connectToMongoDB() {
       });
     }
   });
+
+  // UPDATE FRANCHISE WATCH ORDER
+  app.put(
+    "/api/franchise-folders/:franchiseId/watch-order",
+    async (req, res) => {
+      try {
+        const { franchiseId } = req.params;
+        const { userId, watchOrder } = req.body;
+
+        if (!ObjectId.isValid(franchiseId) || !userId) {
+          return res.status(400).json({
+            message: "Invalid franchise ID or missing user ID",
+          });
+        }
+
+        if (typeof watchOrder !== "string") {
+          return res.status(400).json({
+            message: "Watch order must be a string",
+          });
+        }
+
+        const result = await franchisesCollection.updateOne(
+          {
+            _id: new ObjectId(franchiseId),
+            userId,
+          },
+          {
+            $set: {
+              watchOrder,
+              updatedAt: new Date(),
+            },
+          },
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({
+            message: "Franchise not found",
+          });
+        }
+
+        res.json({
+          message: "Watch order updated successfully",
+        });
+      } catch (error) {
+        console.error("Update watch order error:", error);
+
+        res.status(500).json({
+          message: "Failed to update watch order",
+        });
+      }
+    },
+  );
 
   // DELETE FRANCHISE OR SUBCOLLECTION
   app.delete("/api/franchise-folders/:franchiseId", async (req, res) => {
@@ -1513,42 +1539,41 @@ async function connectToMongoDB() {
   });
 
   // GET MEDIA FOR EDITING
-app.get("/api/editmedia/:id/:userId", async (req, res) => {
-  try {
-    const { id, userId } = req.params;
+  app.get("/api/editmedia/:id/:userId", async (req, res) => {
+    try {
+      const { id, userId } = req.params;
 
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({
-        message: "Invalid media ID",
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({
+          message: "Invalid media ID",
+        });
+      }
+
+      const media = await mediaCollection.findOne({
+        _id: new ObjectId(id),
+        userId,
+      });
+
+      if (!media) {
+        return res.status(404).json({
+          message: "Media not found",
+        });
+      }
+
+      // ATTACH FRANCHISE INFORMATION
+      const [mediaWithFranchises] = await attachFranchisesToMedia(userId, [
+        media,
+      ]);
+
+      res.status(200).json(mediaWithFranchises);
+    } catch (error) {
+      console.error("Error fetching media for editing:", error);
+
+      res.status(500).json({
+        message: "Failed to fetch media",
       });
     }
-
-    const media = await mediaCollection.findOne({
-      _id: new ObjectId(id),
-      userId,
-    });
-
-    if (!media) {
-      return res.status(404).json({
-        message: "Media not found",
-      });
-    }
-
-    // ATTACH FRANCHISE INFORMATION
-    const [mediaWithFranchises] = await attachFranchisesToMedia(
-      userId,
-      [media],
-    );
-
-    res.status(200).json(mediaWithFranchises);
-  } catch (error) {
-    console.error("Error fetching media for editing:", error);
-
-    res.status(500).json({
-      message: "Failed to fetch media",
-    });
-  }
-});
+  });
   // UPDATE EXISTING MEDIA
   app.put("/api/editmedia/:id", async (req, res) => {
     try {
@@ -1647,7 +1672,57 @@ app.get("/api/editmedia/:id/:userId", async (req, res) => {
       });
     }
   });
+  // UPDATE FRANCHISE WATCH ORDER
+  app.put(
+    "/api/franchise-folders/:franchiseId/watch-order",
+    async (req, res) => {
+      try {
+        const { franchiseId } = req.params;
+        const { userId, watchOrder } = req.body;
 
+        if (!ObjectId.isValid(franchiseId) || !userId) {
+          return res.status(400).json({
+            message: "Invalid franchise ID or missing user ID",
+          });
+        }
+
+        if (typeof watchOrder !== "string") {
+          return res.status(400).json({
+            message: "Watch order must be a string",
+          });
+        }
+
+        const result = await franchisesCollection.updateOne(
+          {
+            _id: new ObjectId(franchiseId),
+            userId,
+          },
+          {
+            $set: {
+              watchOrder,
+              updatedAt: new Date(),
+            },
+          },
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({
+            message: "Franchise not found",
+          });
+        }
+
+        res.json({
+          message: "Watch order updated successfully",
+        });
+      } catch (error) {
+        console.error("Update watch order error:", error);
+
+        res.status(500).json({
+          message: "Failed to update watch order",
+        });
+      }
+    },
+  );
   // DELETE MEDIA
   app.delete("/api/media/delete/:id/:userId", async (req, res) => {
     try {
